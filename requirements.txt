@@ -1,7 +1,8 @@
 streamlit
 pandas
 numpy
-scikit-learn==1.8.0  <--- CHANGE THIS LINE
+scikit-learn==1.8.0  
 matplotlib
 seaborn
+
 
