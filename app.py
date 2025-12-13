@@ -5,7 +5,6 @@ import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import mean_squared_error, r2_score
-from math import sqrt 
 
 # ==========================================================
 # Streamlit Page Configuration
@@ -13,243 +12,197 @@ from math import sqrt
 st.set_page_config(page_title="Car Price Prediction Project", layout="wide")
 
 # ==========================================================
-# File Paths (MUST match your saved files)
+# File Paths
 # ==========================================================
 MODEL_PATH = "car_price_model.pkl"
 PREPROCESSOR_PATH = "preprocessor.pkl"
 DATA_PATH = "carprice.csv"
 
 # ==========================================================
-# Helper Functions
+# Feature Lists (MUST match your ColumnTransformer setup in task.ipynb)
 # ==========================================================
 
-# 1. CLEANING FUNCTION (MUST match cleaning logic in task.ipynb)
-@st.cache_data
-def clean_data(df):
-    """Applies necessary cleaning steps for both EDA and prediction."""
-    # Handle NaN in target variable for training/EDA data (not strictly needed for single prediction, but good practice)
-    if 'price' in df.columns:
-        df = df.dropna(subset=['price']).copy()
-    else:
-        df = df.copy()
-
-    # Dictionary for converting word-based numbers to digits
-    word_to_digit = {
-        'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
-        'eight': 8, 'twelve': 12
-    }
-
-    # Apply conversion to specified columns (as strings for mapping)
-    cols_to_convert = ['num-of-doors', 'num-of-cylinders']
-    for col in cols_to_convert:
-        if col in df.columns:
-            # Map word to digit, and fillna with original value (text if not mapped)
-            df[col] = df[col].astype(str).str.lower().map(word_to_digit).fillna(df[col])
-            # Now convert the cleaned column back to its original text representation 
-            # (which the ColumnTransformer expects for OneHotEncoding)
-            df[col] = df[col].astype(str)
-            
-    return df
-
-# 2. NUMERICAL FEATURES LIST (CRITICAL for fixing the type error)
-def get_numerical_features():
-    """Returns the list of numerical features used in the training script."""
-    # This list must be identical to the one used in your ColumnTransformer in task.ipynb
-    return [
+def get_feature_lists():
+    """Defines the feature lists required for type enforcement and UI generation."""
+    # Features treated as Numerical by the preprocessor (for Scaling/Imputation)
+    NUMERICAL_FEATURES = [
         'symboling', 'normalized-losses', 'wheel-base', 'length', 'width', 
         'height', 'curb-weight', 'engine-size', 'bore', 'stroke', 
         'compression-ratio', 'horsepower', 'peak-rpm', 'city-mpg', 'highway-mpg'
     ]
+    # Features treated as Categorical by the preprocessor (for OneHotEncoding)
+    CATEGORICAL_FEATURES = [
+        'make', 'fuel-type', 'aspiration', 'num-of-doors', 'body-style', 
+        'drive-wheels', 'engine-location', 'engine-type', 'num-of-cylinders', 
+        'fuel-system'
+    ]
+    return NUMERICAL_FEATURES, CATEGORICAL_FEATURES
+
 
 # ==========================================================
-# Load Model, Preprocessor & Raw Data (cached)
+# Helper Functions (Cached)
 # ==========================================================
+
+@st.cache_data
+def clean_data(df):
+    """Applies necessary cleaning steps for both EDA and prediction input."""
+    df = df.copy()
+    
+    # Drop rows where the target variable 'price' is missing for EDA/Defaults
+    if 'price' in df.columns:
+        df = df.dropna(subset=['price']) 
+
+    # Handle the text-to-number columns like 'num-of-doors' as strings for the preprocessor
+    # The clean data is primarily used to get consistent unique categories for UI widgets.
+    
+    # We explicitly convert numeric columns to numeric types for EDA/UI defaults
+    num_like_cols = ['bore', 'stroke', 'horsepower', 'peak-rpm']
+    for col in num_like_cols:
+        if col in df.columns:
+             # Errors='coerce' will turn '?' or other non-numeric strings into NaN
+             df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
 @st.cache_resource
 def load_assets():
-    """Load model and preprocessor (critical assets)."""
+    """Load model and preprocessor."""
     try:
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
         with open(PREPROCESSOR_PATH, "rb") as f:
             preprocessor = pickle.load(f)
-        return model, preprocessor
-    except FileNotFoundError:
-        st.error("Required model or preprocessor files not found. Ensure 'car_price_model.pkl' and 'preprocessor.pkl' exist.")
-        return None, None
-
-@st.cache_data
-def load_raw_data():
-    """Load and clean the raw data for EDA and category extraction."""
-    try:
-        # Load raw data with '?' as NaN
         df_raw = pd.read_csv(DATA_PATH, na_values='?')
-        # Clean and get a stable DataFrame for EDA
-        df_cleaned = clean_data(df_raw) 
-        return df_cleaned
+        df_cleaned = clean_data(df_raw)
+        return model, preprocessor, df_cleaned
     except FileNotFoundError:
-        st.error("Raw data file 'carprice.csv' not found.")
-        return pd.DataFrame()
+        st.error("Required project files (model, preprocessor, or data) not found. Check GitHub repository.")
+        st.stop()
+    except Exception as e:
+        st.error(f"An error occurred during asset loading: {e}")
+        st.stop()
 
 
-model, preprocessor = load_assets()
-df_cleaned = load_raw_data()
-
-if model is None or preprocessor is None or df_cleaned.empty:
-    st.stop()
+model, preprocessor, df_cleaned = load_assets()
+NUMERICAL_FEATURES, CATEGORICAL_FEATURES = get_feature_lists()
 
 
 # ==========================================================
-# Prediction Function (FIXED)
+# Prediction Function (FIXED FOR TYPE INCONSISTENCY)
 # ==========================================================
 def predict_price(input_data):
     """Takes user input, preprocesses it, and returns a price prediction."""
+    
     # 1. Convert input dict to DataFrame
     input_df = pd.DataFrame([input_data])
     
-    # 2. Apply the same data cleaning steps (text numbers to original text representation)
-    input_df = clean_data(input_df) 
-    
-    # 3. CRITICAL FIX: Explicitly cast all numerical columns to float
-    num_features = get_numerical_features()
-    for col in num_features:
+    # 2. Type Enforcement FIX (CRITICAL)
+    # Ensure all numerical columns are float
+    for col in NUMERICAL_FEATURES:
         if col in input_df.columns:
-            # Coerce non-numeric values (like the '?' from user-provided NaNs) to NaN, then ensure float type
+            # Use pd.to_numeric with 'coerce' to handle NaNs/objects gracefully, then ensure float type
             input_df[col] = pd.to_numeric(input_df[col], errors='coerce').astype(float) 
 
-    # 4. Preprocess the input data using the fitted preprocessor
-    input_processed = preprocessor.transform(input_df)
-    
-    # 5. Make prediction
-    prediction = model.predict(input_processed)[0]
-    
-    return prediction
+    # Ensure all categorical columns are string/object
+    for col in CATEGORICAL_FEATURES:
+        if col in input_df.columns:
+            # Cast all categorical inputs to string to prevent object-to-numeric issues
+            input_df[col] = input_df[col].astype(str)
+
+    # 3. Preprocess and Predict
+    try:
+        input_processed = preprocessor.transform(input_df)
+        prediction = model.predict(input_processed)[0]
+        return prediction
+    except Exception as e:
+        st.error(f"Prediction failed. Error: {e}. Ensure the number and order of features in the input match the preprocessor.")
+        return np.nan
 
 
 # ==========================================================
-# UI – INTRODUCTION
+# UI – INTRODUCTION & EDA (Single Page)
 # ==========================================================
-st.title("🚗 Car Price Prediction Project")
+st.title("🚗 Data Science Capstone: Car Price Prediction")
 st.markdown("""
-This is the final project submission for the Introduction to Data Science course. 
-The objective is to analyze a comprehensive car dataset and build a machine learning model 
-to accurately predict car prices based on various features.
+This project applies the concepts of **Exploratory Data Analysis (EDA)**, **Data Preprocessing**, 
+and **Machine Learning (Random Forest Regressor)** to predict a car's selling price based on its features.
 """)
 
-# ==========================================================
-# UI – EXPLORATORY DATA ANALYSIS (EDA)
-# ==========================================================
 st.divider()
-st.header("📊 Exploratory Data Analysis (EDA)")
-st.markdown(f"The analysis is performed on the **{DATA_PATH}** dataset, consisting of **{df_cleaned.shape[0]}** clean records and **{df_cleaned.shape[1]}** features.")
 
-tab1, tab2, tab3 = st.tabs(["Summary Statistics", "Correlation Heatmap", "Interactive Visualizations"])
+# --- EDA Section ---
+st.header("📊 Exploratory Data Analysis & Insights")
+st.subheader("1. Feature Correlation with Price")
 
-with tab1:
-    st.subheader("1. Summary Statistics & Missing Values")
-    col_desc, col_miss = st.columns(2)
-    
-    with col_desc:
-        st.markdown("##### Descriptive Statistics (Numerical Features)")
-        st.dataframe(df_cleaned.select_dtypes(include=np.number).describe().T)
-    
-    with col_miss:
-        st.markdown("##### Missing Value Analysis")
-        missing_data = df_cleaned.isnull().sum().sort_values(ascending=False)
-        missing_data = missing_data[missing_data > 0]
-        missing_df = pd.DataFrame({'Feature': missing_data.index, 'Missing Count': missing_data.values})
-        st.dataframe(missing_df, hide_index=True)
+# Correlation Heatmap
+fig, ax = plt.subplots(figsize=(10, 8))
+numeric_cols = df_cleaned.select_dtypes(include=np.number).columns
+corr_matrix = df_cleaned[numeric_cols].corr()
+sns.heatmap(corr_matrix[['price']].sort_values(by='price', ascending=False), 
+            annot=True, fmt=".2f", cmap='coolwarm', cbar=False, ax=ax)
+ax.set_title('Top Feature Correlation with Price')
+st.pyplot(fig)
 
+st.markdown("""
+**Key Insight:** The heatmap highlights the strongest positive predictors of price: 
+**Engine Size (0.87)**, **Curb Weight (0.84)**, and **Horsepower (0.81)**. These features are the most important for the model.
+""")
 
-with tab2:
-    st.subheader("2. Feature Correlation Analysis")
-    st.markdown("A heatmap showing the linear correlation between all numerical features. **Engine Size**, **Curb Weight**, and **Horsepower** show the highest positive correlation with **Price**.")
-    
-    fig, ax = plt.subplots(figsize=(12, 10))
-    # Select only numerical features for correlation
-    numeric_cols = df_cleaned.select_dtypes(include=np.number).columns
-    corr_matrix = df_cleaned[numeric_cols].corr()
-    sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', ax=ax)
-    ax.set_title('Correlation Heatmap of Numerical Features')
-    st.pyplot(fig)
+st.subheader("2. Summary Statistics")
+st.dataframe(df_cleaned[['price', 'horsepower', 'engine-size', 'curb-weight']].describe().T)
 
-
-with tab3:
-    st.subheader("3. Interactive Feature Distribution")
-    
-    # Get lists of feature names for selection
-    numerical_features_eda = [col for col in df_cleaned.select_dtypes(include=np.number).columns.tolist() if col != 'price']
-    categorical_features = df_cleaned.select_dtypes(include='object').columns.tolist()
-
-    viz_type = st.radio("Choose Visualization Type:", ["Distribution (Histogram)", "Price vs. Category (Box Plot)"], horizontal=True)
-
-    if viz_type == "Distribution (Histogram)":
-        feature = st.selectbox("Select Numerical Feature to Visualize:", numerical_features_eda)
-        
-        fig, ax = plt.subplots(figsize=(8, 5))
-        sns.histplot(df_cleaned[feature].dropna(), kde=True, ax=ax)
-        ax.set_title(f'Distribution of {feature.replace("-", " ").title()}')
-        ax.set_xlabel(feature.replace("-", " ").title())
-        st.pyplot(fig)
-
-    elif viz_type == "Price vs. Category (Box Plot)":
-        feature = st.selectbox("Select Categorical Feature for Price Analysis:", categorical_features)
-        
-        # Order by median price for better visualization
-        order = df_cleaned.groupby(feature)['price'].median().sort_values(ascending=False).index
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        sns.boxplot(x=feature, y='price', data=df_cleaned, order=order, ax=ax)
-        ax.set_title(f'Price Distribution by {feature.replace("-", " ").title()}')
-        ax.set_xlabel(feature.replace("-", " ").title())
-        ax.tick_params(axis='x', rotation=45)
-        st.pyplot(fig)
-
+st.divider()
 
 # ==========================================================
 # UI – PREDICTION INTERFACE
 # ==========================================================
-st.divider()
-st.header("🔮 Price Prediction Interface")
-st.markdown("Use the sliders and selectors below to specify the features of the car and predict its selling price.")
+st.header("🔮 Interactive Price Prediction")
+st.markdown("Select features below to get a real-time price prediction.")
 
-# Get lists for the selectors based on the cleaned data
-categorical_defaults = {
+# --- UI Defaults ---
+# Default Imputed/Median Values (must match what the model was trained with)
+defaults = {
     'make': df_cleaned['make'].mode()[0],
     'fuel-type': df_cleaned['fuel-type'].mode()[0],
     'aspiration': df_cleaned['aspiration'].mode()[0],
     'body-style': df_cleaned['body-style'].mode()[0],
     'drive-wheels': df_cleaned['drive-wheels'].mode()[0],
-}
-numerical_ranges = {
-    'horsepower': (48, 288, df_cleaned['horsepower'].median()),
-    'engine-size': (61, 326, df_cleaned['engine-size'].median()),
-    'curb-weight': (1488, 4066, df_cleaned['curb-weight'].median()),
-    'highway-mpg': (16, 54, df_cleaned['highway-mpg'].median())
+    'horsepower': df_cleaned['horsepower'].median(),
+    'engine-size': df_cleaned['engine-size'].median(),
+    'curb-weight': df_cleaned['curb-weight'].median(),
+    'highway-mpg': df_cleaned['highway-mpg'].median()
 }
 
-
-# Collect user input
 user_input = {}
-col1, col2 = st.columns(2)
+col_input, col_output = st.columns([2, 1])
 
-with col1:
-    st.subheader("Car Features")
+with col_input:
+    st.markdown("##### Adjust Car Specifications")
     
-    # Categorical Inputs
-    user_input['make'] = st.selectbox("Make", df_cleaned['make'].unique(), index=list(df_cleaned['make'].unique()).index(categorical_defaults['make']))
-    user_input['body-style'] = st.selectbox("Body Style", df_cleaned['body-style'].unique(), index=list(df_cleaned['body-style'].unique()).index(categorical_defaults['body-style']))
-    user_input['drive-wheels'] = st.selectbox("Drive Wheels", df_cleaned['drive-wheels'].unique(), index=list(df_cleaned['drive-wheels'].unique()).index(categorical_defaults['drive-wheels']))
-    user_input['fuel-type'] = st.radio("Fuel Type", df_cleaned['fuel-type'].unique(), index=list(df_cleaned['fuel-type'].unique()).index(categorical_defaults['fuel-type']), horizontal=True)
-    user_input['aspiration'] = st.radio("Aspiration", df_cleaned['aspiration'].unique(), index=list(df_cleaned['aspiration'].unique()).index(categorical_defaults['aspiration']), horizontal=True)
-    
-    # Numerical-like inputs that are passed as the text format the model expects
-    user_input['num-of-doors'] = st.selectbox("Number of Doors", ['four', 'two'], index=0)
-    user_input['num-of-cylinders'] = st.selectbox("Number of Cylinders", ['four', 'six', 'five', 'eight', 'two', 'three', 'twelve'], index=0)
+    # Row 1: Key Categorical Features
+    col1, col2, col3 = st.columns(3)
+    user_input['make'] = col1.selectbox("Make", df_cleaned['make'].unique(), index=list(df_cleaned['make'].unique()).index(defaults['make']))
+    user_input['body-style'] = col2.selectbox("Body Style", df_cleaned['body-style'].unique(), index=list(df_cleaned['body-style'].unique()).index(defaults['body-style']))
+    user_input['drive-wheels'] = col3.selectbox("Drive Wheels", df_cleaned['drive-wheels'].unique(), index=list(df_cleaned['drive-wheels'].unique()).index(defaults['drive-wheels']))
 
-    # All necessary features for the model must be present, even if imputed later
-    user_input['normalized-losses'] = np.nan
+    # Row 2: Key Numerical Features (Sliders)
+    user_input['horsepower'] = st.slider("Horsepower (hp)", 48, 288, int(defaults['horsepower']))
+    user_input['engine-size'] = st.slider("Engine Size (cc)", 61, 326, int(defaults['engine-size']))
+    user_input['curb-weight'] = st.slider("Curb Weight (lbs)", 1488, 4066, int(defaults['curb-weight']))
+    user_input['highway-mpg'] = st.slider("Highway MPG", 16, 54, int(defaults['highway-mpg']))
+    
+    # Row 3: Other Categorical Features
+    col4, col5, col6, col7 = st.columns(4)
+    user_input['fuel-type'] = col4.radio("Fuel Type", df_cleaned['fuel-type'].unique(), index=list(df_cleaned['fuel-type'].unique()).index(defaults['fuel-type']))
+    user_input['aspiration'] = col5.radio("Aspiration", df_cleaned['aspiration'].unique(), index=list(df_cleaned['aspiration'].unique()).index(defaults['aspiration']))
+    # Note: These MUST be in text format for the categorical encoder
+    user_input['num-of-doors'] = col6.selectbox("Doors", ['four', 'two'], index=0)
+    user_input['num-of-cylinders'] = col7.selectbox("Cylinders", ['four', 'six', 'five', 'eight', 'two', 'three', 'twelve'], index=0)
+
+    # --- Hidden Imputed Values (Needed to complete the 25 features of the preprocessor) ---
+    user_input['normalized-losses'] = np.nan # Will be imputed by the preprocessor
     user_input['symboling'] = 0
-    user_input['engine-location'] = 'front' # Mode
+    user_input['engine-location'] = 'front'
     user_input['wheel-base'] = df_cleaned['wheel-base'].median()
     user_input['length'] = df_cleaned['length'].median()
     user_input['width'] = df_cleaned['width'].median()
@@ -263,69 +216,53 @@ with col1:
     user_input['city-mpg'] = df_cleaned['city-mpg'].median()
 
 
-    # Numerical Slider Inputs
-    user_input['horsepower'] = st.slider("Horsepower (hp)", numerical_ranges['horsepower'][0], numerical_ranges['horsepower'][1], int(numerical_ranges['horsepower'][2]))
-    user_input['engine-size'] = st.slider("Engine Size (cc)", numerical_ranges['engine-size'][0], numerical_ranges['engine-size'][1], int(numerical_ranges['engine-size'][2]))
-    user_input['curb-weight'] = st.slider("Curb Weight (lbs)", numerical_ranges['curb-weight'][0], numerical_ranges['curb-weight'][1], int(numerical_ranges['curb-weight'][2]))
-    user_input['highway-mpg'] = st.slider("Highway MPG", numerical_ranges['highway-mpg'][0], numerical_ranges['highway-mpg'][1], int(numerical_ranges['highway-mpg'][2]))
-
-
-with col2:
-    st.subheader("Prediction Output")
-    st.markdown("Click the button below to predict the car price.")
-
+with col_output:
+    st.markdown("##### Predicted Price")
     if st.button("Predict Price", type="primary"):
-        price = predict_price(user_input)
-        st.markdown(
-            f"""
-            <div style="background-color:#1f4e79;padding:25px;border-radius:12px;text-align:center;">
-                <h3 style="color:white;">Estimated Car Price</h3>
-                <h1 style="color:#f9c74f;">${price:,.2f}</h1>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        predicted_price = predict_price(user_input)
+        if not np.isnan(predicted_price):
+            st.markdown(
+                f"""
+                <div style="background-color:#1f4e79;padding:25px;border-radius:12px;text-align:center;">
+                    <h3 style="color:white;">Estimated Selling Price</h3>
+                    <h1 style="color:#f9c74f;">${predicted_price:,.2f}</h1>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
     else:
         st.info("Adjust inputs and press **Predict Price**.")
 
 # ==========================================================
-# UI – MODEL INFO
+# UI – MODEL INFO & CONCLUSION
 # ==========================================================
 st.divider()
-st.header("📌 Model Information and Performance")
-st.markdown("""
-The model used is a **Random Forest Regressor**, which is well-suited for non-linear regression problems like price prediction.
-""")
+st.header("📌 Model Performance and Conclusion")
 
-# Display the evaluation metrics from task.ipynb (Using placeholders from previous successful runs)
-st.subheader("Model Evaluation on Test Set")
-col_rmse, col_r2 = st.columns(2)
+col_model, col_conclusion = st.columns(2)
 
-RMSE_VALUE = 2504.66
-R2_VALUE = 0.9009
+with col_model:
+    st.subheader("Model Evaluation")
+    
+    # These values are taken from the task.ipynb output and should be confirmed
+    RMSE_VALUE = 2504.66
+    R2_VALUE = 0.9009
+    
+    st.metric("Root Mean Squared Error (RMSE)", f"${RMSE_VALUE:,.2f}")
+    st.metric("R-squared (R²)", f"{R2_VALUE:.4f}")
 
-col_rmse.metric("Root Mean Squared Error (RMSE)", f"${RMSE_VALUE:,.2f}")
-col_r2.metric("R-squared (R²)", f"{R2_VALUE:.4f}", help="Indicates that the model explains approximately 90% of the variance in car prices.")
+    st.markdown("""
+    - **Model Used:** Random Forest Regressor (Regression Model).
+    - **Preprocessing Pipeline:** Imputation for missing values, One-Hot Encoding for categorical features, and Standard Scaling for numerical features.
+    """)
 
-st.markdown("""
-- **Model:** Random Forest Regressor (Ensemble model providing robust prediction).
-- **Preprocessing:** All numerical features were **Standard Scaled** and all categorical features were converted using **One-Hot Encoding**. Missing values were handled via **Imputation** (mean for numerical, mode for categorical).
-""")
+with col_conclusion:
+    st.subheader("Project Conclusion")
+    st.markdown("""
+    This project successfully achieved its goal by building a highly accurate price prediction model ($R^2 \approx 0.90$). The deployment to Streamlit Cloud provides a crucial interactive component.
 
-
-# ==========================================================
-# UI – CONCLUSION
-# ==========================================================
-st.divider()
-st.header("✅ Conclusion")
-st.markdown("""
-This project successfully developed a car price prediction model with high performance ($R^2 \\approx 0.90$). 
-
-**Key Takeaways:**
-* **Data Preparation is Paramount:** Correctly handling mixed data types and ensuring consistent input features in the Streamlit app was the key to successful deployment and accurate predictions.
-* **Engine Metrics Dominate:** The EDA confirmed that features related to the engine and physical size (`horsepower`, `engine-size`, `curb-weight`) are the strongest predictors of a car's price.
-* **Model Implementation:** By saving and loading the **`preprocessor`** alongside the trained **`model`**, we ensured that the Streamlit application could transform raw user input exactly as the training data was transformed, allowing for accurate, real-time predictions.
-""")
+    **Final Takeaway:** Maintaining strict data type consistency between the training environment (Jupyter Notebook) and the deployment environment (Streamlit) is the most critical factor for successfully using saved scikit-learn preprocessing pipelines.
+    """)
 
 # Ensure plots are closed
 plt.close('all')
