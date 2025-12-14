@@ -15,6 +15,18 @@ st.set_page_config(
 )
 
 # ==========================================================
+# EXPECTED FEATURES (MUST MATCH TRAINING PIPELINE)
+# ==========================================================
+ALL_FEATURES = [
+    'symboling', 'normalized-losses', 'wheel-base', 'length', 'width', 'height',
+    'curb-weight', 'engine-size', 'bore', 'stroke', 'compression-ratio',
+    'horsepower', 'peak-rpm', 'city-mpg', 'highway-mpg',
+    'num-of-doors', 'num-of-cylinders',
+    'make', 'fuel-type', 'aspiration', 'body-style',
+    'drive-wheels', 'engine-location', 'engine-type', 'fuel-system'
+]
+
+# ==========================================================
 # LOAD PIPELINE & DATA
 # ==========================================================
 @st.cache_resource
@@ -32,7 +44,7 @@ pipeline, df = load_pipeline_and_data()
 st.sidebar.title("🚘 Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["🏠 Home", "📊 Exploratory Data Analysis", "🔮 Price Prediction", "📌 Model Info"]
+    ["🏠 Home", "📊 EDA", "🔮 Prediction", "📌 Model Info"]
 )
 
 # ==========================================================
@@ -40,28 +52,16 @@ page = st.sidebar.radio(
 # ==========================================================
 if page == "🏠 Home":
     st.title("🚗 Car Price Prediction System")
-    st.subheader("Machine Learning Powered Vehicle Price Estimation")
-
     st.markdown("""
-    ### 📌 Project Overview
-    This application predicts **car selling prices** using a  
-    **Random Forest Regression model** trained on real automobile data.
-
-    ### 🔧 Technologies Used
-    - Python
-    - Pandas, NumPy
-    - Scikit-learn
-    - Streamlit
-    - Matplotlib & Seaborn
-
-    ### 🎯 Objective
-    Help users estimate a **fair market price** based on car specifications.
+    ### 📌 Overview
+    A **Machine Learning web application** that predicts used-car prices
+    using a **Random Forest Regression Pipeline**.
     """)
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Model Type", "Random Forest")
-    col2.metric("Dataset Size", f"{df.shape[0]} Cars")
-    col3.metric("Features Used", df.shape[1] - 1)
+    col1.metric("Algorithm", "Random Forest")
+    col2.metric("Dataset Size", df.shape[0])
+    col3.metric("Total Features", len(ALL_FEATURES))
 
     st.image(
         "https://images.unsplash.com/photo-1503376780353-7e6692767b70",
@@ -71,10 +71,8 @@ if page == "🏠 Home":
 # ==========================================================
 # EDA PAGE
 # ==========================================================
-elif page == "📊 Exploratory Data Analysis":
+elif page == "📊 EDA":
     st.title("📊 Exploratory Data Analysis")
-
-    st.markdown("### 🔍 Feature Correlation with Price")
 
     numeric_cols = df.select_dtypes(include=np.number).columns
     corr = df[numeric_cols].corr()
@@ -89,37 +87,15 @@ elif page == "📊 Exploratory Data Analysis":
     st.pyplot(fig)
 
     st.markdown("""
-    **Insight:**  
-    - Engine Size  
-    - Curb Weight  
-    - Horsepower  
-
-    have the **strongest influence** on car price.
+    **Key Insight:**  
+    Engine Size, Horsepower, and Curb Weight are the most influential features.
     """)
-
-    st.markdown("---")
-
-    st.markdown("### 📈 Price Distribution")
-    fig2, ax2 = plt.subplots()
-    sns.histplot(df['price'], bins=30, kde=True, ax=ax2)
-    st.pyplot(fig2)
 
 # ==========================================================
 # PREDICTION PAGE
 # ==========================================================
-elif page == "🔮 Price Prediction":
+elif page == "🔮 Prediction":
     st.title("🔮 Predict Car Price")
-    st.markdown("Fill in the car details below:")
-
-    defaults = {
-        'make': df['make'].mode()[0],
-        'body-style': df['body-style'].mode()[0],
-        'drive-wheels': df['drive-wheels'].mode()[0],
-        'horsepower': int(df['horsepower'].median()),
-        'engine-size': int(df['engine-size'].median()),
-        'curb-weight': int(df['curb-weight'].median()),
-        'highway-mpg': int(df['highway-mpg'].median())
-    }
 
     col1, col2 = st.columns(2)
 
@@ -127,15 +103,16 @@ elif page == "🔮 Price Prediction":
         make = st.selectbox("Make", df['make'].unique())
         body = st.selectbox("Body Style", df['body-style'].unique())
         drive = st.selectbox("Drive Wheels", df['drive-wheels'].unique())
-        doors = st.selectbox("Number of Doors", ['two', 'four'])
+        doors = st.selectbox("Doors", ['two', 'four'])
         cylinders = st.selectbox("Cylinders", ['four','five','six','eight'])
 
     with col2:
-        horsepower = st.slider("Horsepower", 48, 288, defaults['horsepower'])
-        engine_size = st.slider("Engine Size", 61, 326, defaults['engine-size'])
-        curb_weight = st.slider("Curb Weight", 1488, 4066, defaults['curb-weight'])
-        highway_mpg = st.slider("Highway MPG", 16, 54, defaults['highway-mpg'])
+        horsepower = st.slider("Horsepower", 48, 288, int(df['horsepower'].median()))
+        engine_size = st.slider("Engine Size", 61, 326, int(df['engine-size'].median()))
+        curb_weight = st.slider("Curb Weight", 1488, 4066, int(df['curb-weight'].median()))
+        highway_mpg = st.slider("Highway MPG", 16, 54, int(df['highway-mpg'].median()))
 
+    # USER INPUT DICTIONARY
     user_input = {
         'make': make,
         'body-style': body,
@@ -148,14 +125,15 @@ elif page == "🔮 Price Prediction":
         'highway-mpg': highway_mpg
     }
 
-    # Fill missing columns
-    for col in pipeline.named_steps['preprocessor'].feature_names_in_:
+    # ENSURE ALL FEATURES EXIST
+    for col in ALL_FEATURES:
         if col not in user_input:
             user_input[col] = np.nan
 
     if st.button("🚀 Predict Price"):
         input_df = pd.DataFrame([user_input])
 
+        # Word → Digit conversion
         word_to_digit = {
             'two':2, 'three':3, 'four':4, 'five':5,
             'six':6, 'eight':8, 'twelve':12
@@ -167,8 +145,8 @@ elif page == "🔮 Price Prediction":
 
         st.markdown(
             f"""
-            <div style="background:#1f2933;padding:30px;border-radius:15px;text-align:center;">
-                <h3 style="color:white;">Estimated Car Price</h3>
+            <div style="background:#111827;padding:30px;border-radius:15px;text-align:center;">
+                <h3 style="color:white;">Estimated Price</h3>
                 <h1 style="color:#22c55e;">${prediction:,.2f}</h1>
             </div>
             """,
@@ -179,32 +157,25 @@ elif page == "🔮 Price Prediction":
 # MODEL INFO PAGE
 # ==========================================================
 elif page == "📌 Model Info":
-    st.title("📌 Model Information")
+    st.title("📌 Model Details")
 
     st.markdown("""
-    ### 🧠 Model Details
-    - **Algorithm:** Random Forest Regressor
+    - **Algorithm:** Random Forest Regressor  
     - **Preprocessing:**  
       - Missing Value Imputation  
       - Feature Scaling  
-      - One-Hot Encoding
+      - One-Hot Encoding  
     """)
 
     col1, col2 = st.columns(2)
     col1.metric("RMSE", "$2504")
     col2.metric("R² Score", "0.90")
 
-    st.markdown("""
-    ### ✅ Conclusion
-    The model performs strongly and generalizes well, making it suitable for
-    real-world car price estimation.
-    """)
-
 # ==========================================================
 # FOOTER
 # ==========================================================
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;color:gray;'>© 2025 | Car Price Prediction | Streamlit ML App</p>",
+    "<p style='text-align:center;color:gray;'>© 2025 | Car Price Prediction App</p>",
     unsafe_allow_html=True
 )
