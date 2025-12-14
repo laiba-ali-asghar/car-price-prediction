@@ -2,9 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
 
 # ======================
 # Paths
@@ -28,8 +25,16 @@ model = load_model()
 df = pd.read_csv(DATA_PATH, na_values="?").dropna()
 
 # ======================
-# Feature Lists
+# Columns (from your model)
 # ======================
+MODEL_FEATURES = [
+    "symboling","normalized-losses","wheel-base","length","width","height",
+    "curb-weight","engine-size","bore","stroke","compression-ratio","horsepower",
+    "peak-rpm","city-mpg","highway-mpg","make","fuel-type","aspiration",
+    "num-of-doors","body-style","drive-wheels","engine-location","engine-type",
+    "num-of-cylinders","fuel-system"
+]
+
 NUMERICAL = [
     "symboling","normalized-losses","wheel-base","length","width","height",
     "curb-weight","engine-size","bore","stroke","compression-ratio","horsepower",
@@ -41,60 +46,51 @@ CATEGORICAL = [
     "engine-location","engine-type","num-of-cylinders","fuel-system"
 ]
 
-ALL_FEATURES = NUMERICAL + CATEGORICAL
+# ======================
+# Build label encoders from training CSV
+# ======================
+label_maps = {}
+
+for col in CATEGORICAL:
+    df[col] = df[col].astype("category")
+    # mapping: category_name -> code
+    label_maps[col] = {cat: code for code, cat in enumerate(df[col].cat.categories)}
 
 # ======================
-# Build Preprocessor (REQUIRED!)
+# UI
 # ======================
-preprocessor = ColumnTransformer(
-    transformers=[
-        ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
-        ("num", "passthrough", NUMERICAL)
-    ]
-)
-
-# ======================
-# Streamlit UI
-# ======================
-st.title("🚗 Car Price Prediction App")
+st.title("🚗 Car Price Prediction")
 
 inputs = {}
-
-st.subheader("Enter Car Specifications")
-
 cols = st.columns(2)
 
-# numeric fields
+# numeric inputs
 for i, col in enumerate(NUMERICAL):
+    default = float(df[col].median())
     with cols[i % 2]:
-        default = float(df[col].median())
         inputs[col] = st.number_input(col, value=default)
 
-# categorical fields
+# categorical inputs
 for i, col in enumerate(CATEGORICAL):
     with cols[i % 2]:
-        choices = sorted(df[col].unique().tolist())
-        default = df[col].mode()[0]
-        inputs[col] = st.selectbox(col, choices, index=choices.index(default))
+        options = list(label_maps[col].keys())
+        default = options[0]
+        choice = st.selectbox(col, options)
+        inputs[col] = label_maps[col][choice]   # convert to integer code
 
-# Convert to DataFrame
-input_df = pd.DataFrame([inputs])
+# build dataframe
+input_df = pd.DataFrame([inputs])[MODEL_FEATURES]
 
 # ======================
-# Predict
+# Prediction
 # ======================
 if st.button("Predict Price"):
-
     try:
-        # apply preprocessing (OneHotEncoder)
-        X_processed = preprocessor.fit(df[ALL_FEATURES]).transform(input_df)
-
-        # run final model prediction
-        pred = model.predict(X_processed)[0]
-
+        pred = model.predict(input_df)[0]
         st.success(f"Predicted Price: ${pred:,.2f}")
 
     except Exception as e:
         st.error("Prediction failed.")
         st.write(str(e))
-        st.write("Input:", input_df)
+        st.write("Input sent to model:")
+        st.write(input_df)
