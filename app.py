@@ -18,11 +18,12 @@ DATA_PATH = "carprice.csv"
 
 # ==========================================================
 # Model Feature Lists (CRITICAL FIX: This order MUST match the ColumnTransformer)
-# Based on the metadata from your preprocessor.pkl, these are the expected lists:
+# This order is reconstructed from the feature indexing in the saved preprocessor.pkl
 # ==========================================================
 # Features that go through the NUMERICAL transformer (17 features)
+# The order is unusual because of how the training script defined the lists.
 NUMERICAL_FEATURES = [
-    # symboling is an integer column, likely added at the start of the numerical data
+    # symboling is a discrete numerical feature
     'symboling',
     'normalized-losses', 
     'wheel-base', 
@@ -38,7 +39,7 @@ NUMERICAL_FEATURES = [
     'peak-rpm', 
     'city-mpg', 
     'highway-mpg',
-    # num-of-doors and num-of-cylinders are converted to numbers (floats)
+    # These two are passed as words from the UI but converted to floats before the pipeline
     'num-of-doors', 
     'num-of-cylinders'
 ]
@@ -49,7 +50,7 @@ CATEGORICAL_FEATURES = [
     'engine-location', 'engine-type', 'fuel-system'
 ]
 
-# Combine all features: NUMERICAL_FEATURES first, then CATEGORICAL_FEATURES
+# Combine all features in the final, expected order (NUMERICAL_FEATURES first, then CATEGORICAL_FEATURES)
 MODEL_FEATURES = NUMERICAL_FEATURES + CATEGORICAL_FEATURES 
 
 
