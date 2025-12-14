@@ -17,7 +17,23 @@ MODEL_PATH = "car_price_model.pkl"
 DATA_PATH = "carprice.csv"
 
 # ==========================================================
-# Load Pipeline & Data (Cached)
+# Feature Lists (must match pipeline training)
+# ==========================================================
+NUMERICAL_FEATURES = [
+    'symboling','normalized-losses','wheel-base','length','width','height','curb-weight',
+    'engine-size','bore','stroke','compression-ratio','horsepower','peak-rpm',
+    'city-mpg','highway-mpg','num-of-doors','num-of-cylinders'
+]
+
+CATEGORICAL_FEATURES = [
+    'make','fuel-type','aspiration','body-style','drive-wheels',
+    'engine-location','engine-type','fuel-system'
+]
+
+MODEL_FEATURES = NUMERICAL_FEATURES + CATEGORICAL_FEATURES
+
+# ==========================================================
+# Load Pipeline & Data
 # ==========================================================
 @st.cache_resource
 def load_pipeline_and_data():
@@ -25,7 +41,7 @@ def load_pipeline_and_data():
         # Load trained pipeline
         with open(MODEL_PATH, "rb") as f:
             pipeline = pickle.load(f)
-        
+
         # Load raw data for defaults/EDA
         df_raw = pd.read_csv(DATA_PATH, na_values="?")
         df = df_raw.dropna(subset=['price']).copy()
@@ -137,7 +153,7 @@ with col_output:
     st.markdown("##### Predicted Price")
     if st.button("Predict Price", type="primary"):
         try:
-            # 1. Create DataFrame from user input
+            # 1. Create DataFrame from user_input
             input_df = pd.DataFrame([user_input])
 
             # 2. Map word numbers to digits
@@ -145,22 +161,13 @@ with col_output:
             for col in ['num-of-doors','num-of-cylinders']:
                 input_df[col] = input_df[col].astype(str).str.lower().map(word_to_digit)
 
-            # 3. Reindex columns exactly as pipeline expects
-            if hasattr(pipeline, 'feature_names_in_'):
-                input_df = input_df.reindex(columns=pipeline.feature_names_in_)
-            else:
-                st.error("Pipeline does not have 'feature_names_in_'. Make sure it is a full Pipeline object.")
-                st.stop()
+            # 3. Ensure numeric columns are float
+            input_df[NUMERICAL_FEATURES] = input_df[NUMERICAL_FEATURES].astype(float)
 
-            # 4. Ensure numeric columns are float
-            numeric_cols = input_df.select_dtypes(include=['int64', 'float64']).columns
-            input_df[numeric_cols] = input_df[numeric_cols].astype(float)
+            # 4. Ensure categorical columns are object
+            input_df[CATEGORICAL_FEATURES] = input_df[CATEGORICAL_FEATURES].astype(object)
 
-            # 5. Ensure categorical columns are object
-            categorical_cols = input_df.select_dtypes(include=['object']).columns
-            input_df[categorical_cols] = input_df[categorical_cols].astype(object)
-
-            # 6. Make prediction
+            # 5. Predict
             predicted_price = pipeline.predict(input_df)[0]
 
             st.markdown(
