@@ -2,90 +2,99 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
-# ==============================
+# ======================
 # Paths
-# ==============================
+# ======================
 MODEL_PATH = "car_price_model.pkl"
 DATA_PATH = "carprice.csv"
 
-# ==============================
+# ======================
 # Load model
-# ==============================
+# ======================
 @st.cache_resource
-def load_pipeline():
+def load_model():
     with open(MODEL_PATH, "rb") as f:
         return pickle.load(f)
 
-pipeline = load_pipeline()
+model = load_model()
 
-# ==============================
-# Load training dataset
-# ==============================
-df = pd.read_csv(DATA_PATH, na_values="?").dropna(subset=["price"])
+# ======================
+# Load dataset
+# ======================
+df = pd.read_csv(DATA_PATH, na_values="?").dropna()
 
-# BELOW IS CRITICAL:
-# Convert all categorical columns to category codes (same encoding as training)
-cat_cols = df.select_dtypes(include="object").columns.tolist()
+# ======================
+# Feature Lists
+# ======================
+NUMERICAL = [
+    "symboling","normalized-losses","wheel-base","length","width","height",
+    "curb-weight","engine-size","bore","stroke","compression-ratio","horsepower",
+    "peak-rpm","city-mpg","highway-mpg"
+]
 
-for col in cat_cols:
-    df[col] = df[col].astype("category")
-    df[col] = df[col].cat.codes
+CATEGORICAL = [
+    "make","fuel-type","aspiration","num-of-doors","body-style","drive-wheels",
+    "engine-location","engine-type","num-of-cylinders","fuel-system"
+]
 
-# This gives the model's exact expected structure
-MODEL_FEATURES = pipeline.feature_names_in_.tolist()
+ALL_FEATURES = NUMERICAL + CATEGORICAL
 
-# ==============================
+# ======================
+# Build Preprocessor (REQUIRED!)
+# ======================
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
+        ("num", "passthrough", NUMERICAL)
+    ]
+)
+
+# ======================
 # Streamlit UI
-# ==============================
+# ======================
 st.title("🚗 Car Price Prediction App")
 
-st.write("Fill in the car details to predict the selling price.")
+inputs = {}
 
-user_data = {}
+st.subheader("Enter Car Specifications")
 
 cols = st.columns(2)
 
-for idx, col in enumerate(MODEL_FEATURES):
-
-    if col in cat_cols:
-        # categorical → show dropdown of original labels
-        original_categories = pd.read_csv(DATA_PATH, na_values="?")[col].dropna().unique().tolist()
-        default = pd.read_csv(DATA_PATH, na_values="?")[col].mode()[0]
-
-        with cols[idx % 2]:
-            choice = st.selectbox(col, original_categories, index=original_categories.index(default))
-
-            # encode using SAME mapping
-            df_original = pd.read_csv(DATA_PATH, na_values="?")
-            df_original[col] = df_original[col].astype("category")
-            code_map = dict(enumerate(df_original[col].cat.categories))
-
-            # reverse mapping (label → code)
-            reverse_map = {v: k for k, v in code_map.items()}
-
-            user_data[col] = reverse_map[choice]
-
-    else:
-        # numeric feature
+# numeric fields
+for i, col in enumerate(NUMERICAL):
+    with cols[i % 2]:
         default = float(df[col].median())
-        with cols[idx % 2]:
-            user_data[col] = st.number_input(col, value=default)
+        inputs[col] = st.number_input(col, value=default)
 
-# Build final input row
-input_df = pd.DataFrame([user_data])
-input_df = input_df[MODEL_FEATURES]
+# categorical fields
+for i, col in enumerate(CATEGORICAL):
+    with cols[i % 2]:
+        choices = sorted(df[col].unique().tolist())
+        default = df[col].mode()[0]
+        inputs[col] = st.selectbox(col, choices, index=choices.index(default))
 
-# ==============================
+# Convert to DataFrame
+input_df = pd.DataFrame([inputs])
+
+# ======================
 # Predict
-# ==============================
+# ======================
 if st.button("Predict Price"):
+
     try:
-        pred = pipeline.predict(input_df)[0]
-        st.success(f"Predicted Car Price: ${pred:,.2f}")
+        # apply preprocessing (OneHotEncoder)
+        X_processed = preprocessor.fit(df[ALL_FEATURES]).transform(input_df)
+
+        # run final model prediction
+        pred = model.predict(X_processed)[0]
+
+        st.success(f"Predicted Price: ${pred:,.2f}")
 
     except Exception as e:
         st.error("Prediction failed.")
         st.write(str(e))
-        st.write("Input sent to model:")
-        st.write(input_df)
+        st.write("Input:", input_df)
