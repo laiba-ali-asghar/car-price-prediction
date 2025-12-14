@@ -8,7 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import r2_score
 
 # ----------------------------------
-# Page setup
+# Page config
 # ----------------------------------
 st.set_page_config(page_title="Car Price Prediction", layout="centered")
 st.title("🚗 Car Price Prediction")
@@ -21,13 +21,11 @@ def load_data():
     df = pd.read_csv("carprice.csv")
     df.replace("?", np.nan, inplace=True)
 
-    # Convert target explicitly
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
-
-    # Convert other numeric-looking columns
+    # Explicit numeric conversion
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="ignore")
 
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
     df.dropna(inplace=True)
     return df
 
@@ -45,47 +43,63 @@ for col in df_encoded.select_dtypes(include="object").columns:
     label_encoders[col] = le
 
 # ----------------------------------
-# Split features & target
+# Split data
 # ----------------------------------
 X = df_encoded.drop("price", axis=1)
 y = df_encoded["price"]
 
-# ----------------------------------
-# Train model
-# ----------------------------------
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
+# ----------------------------------
+# Train model
+# ----------------------------------
 model = RandomForestRegressor(
     n_estimators=200,
     random_state=42
 )
 model.fit(X_train, y_train)
 
-# ----------------------------------
-# Model score
-# ----------------------------------
 r2 = r2_score(y_test, model.predict(X_test))
-st.write(f"### 📊 Model R² Score: **{r2:.2f}**")
+st.markdown(f"### 📊 Model R² Score: **{r2:.2f}**")
 
 # ----------------------------------
-# User input sliders
+# User inputs (SAFE)
 # ----------------------------------
 st.subheader("🔧 Enter Car Specifications")
 
 user_input = {}
-for col in X.columns:
-    min_val = float(X[col].min())
-    max_val = float(X[col].max())
-    default = float(X[col].mean())
 
-    user_input[col] = st.slider(
-        col,
-        min_value=min_val,
-        max_value=max_val,
-        value=default
-    )
+for col in X.columns:
+    col_min = X[col].min()
+    col_max = X[col].max()
+    col_mean = X[col].mean()
+
+    # Handle constant columns
+    if col_min == col_max:
+        user_input[col] = st.number_input(
+            col,
+            value=float(col_min),
+            disabled=True
+        )
+        continue
+
+    # Integer feature
+    if np.issubdtype(X[col].dtype, np.integer):
+        user_input[col] = st.slider(
+            col,
+            int(col_min),
+            int(col_max),
+            int(col_mean)
+        )
+    else:
+        user_input[col] = st.slider(
+            col,
+            float(col_min),
+            float(col_max),
+            float(col_mean)
+        )
 
 input_df = pd.DataFrame([user_input])
 
@@ -97,7 +111,7 @@ if st.button("💰 Predict Price"):
     st.success(f"Estimated Car Price: **${prediction:,.2f}**")
 
 # ----------------------------------
-# Dataset preview
+# Data preview
 # ----------------------------------
 with st.expander("📄 Dataset Preview"):
     st.dataframe(df.head(10))
