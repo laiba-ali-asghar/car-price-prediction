@@ -10,7 +10,7 @@ MODEL_PATH = "car_price_model.pkl"
 DATA_PATH = "carprice.csv"
 
 # ===============================
-# Load pipeline
+# Load model pipeline
 # ===============================
 @st.cache_resource
 def load_pipeline():
@@ -19,57 +19,77 @@ def load_pipeline():
 
 pipeline = load_pipeline()
 
-# The model expects these exact columns:
-MODEL_FEATURES = pipeline.feature_names_in_.tolist()
-
-# Load dataset for default values
-df = pd.read_csv(DATA_PATH, na_values="?").dropna(subset=['price'])
+# ===============================
+# Load dataset
+# ===============================
+df = pd.read_csv(DATA_PATH, na_values="?").dropna(subset=["price"])
 
 # ===============================
-# Build default input values
+# Identify features
 # ===============================
-defaults = {}
+NUMERICAL_FEATURES = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+NUMERICAL_FEATURES = [c for c in NUMERICAL_FEATURES if c != "price"]
 
-for col in MODEL_FEATURES:
+CATEGORICAL_FEATURES = df.select_dtypes(include=["object"]).columns.tolist()
 
-    # Numerical feature
-    if pd.api.types.is_numeric_dtype(df[col]):
-        defaults[col] = float(df[col].median())
-
-    # Categorical feature
-    else:
-        defaults[col] = df[col].mode()[0]
-
-# Convert to DataFrame
-input_df = pd.DataFrame([defaults])
-
-# Final reorder to match pipeline
-input_df = input_df[pipeline.feature_names_in_]
+MODEL_FEATURES = NUMERICAL_FEATURES + CATEGORICAL_FEATURES
 
 # ===============================
 # Streamlit UI
 # ===============================
-st.title("🚗 Car Price Prediction")
-st.markdown("### Predicted Price using Default Values")
+st.title("🚗 Car Price Prediction App")
 
-try:
-    predicted_price = pipeline.predict(input_df)[0]
+st.markdown("Enter the car details below and get the predicted price.")
 
-    st.markdown(
-        f"""
-        <div style="background-color:#1f4e79;padding:25px;border-radius:12px;text-align:center;">
-            <h3 style="color:white;">Estimated Selling Price</h3>
-            <h1 style="color:#f9c74f;">${predicted_price:,.2f}</h1>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+user_input = {}
 
-except Exception as e:
-    st.error("❌ Prediction failed. Your model and input feature columns do not match.")
-    st.write("### Expected columns by the model:")
-    st.write(list(pipeline.feature_names_in_))
-    st.write("### Columns provided to model:")
-    st.write(list(input_df.columns))
-    st.write("### Error message:")
-    st.write(str(e))
+st.subheader("Car Information")
+
+cols = st.columns(2)
+
+# Numeric Inputs
+for idx, col in enumerate(NUMERICAL_FEATURES):
+    with cols[idx % 2]:
+        default_value = float(df[col].median())
+        user_input[col] = st.number_input(
+            label=col,
+            value=default_value,
+            format="%.2f"
+        )
+
+# Categorical Inputs
+for idx, col in enumerate(CATEGORICAL_FEATURES):
+    with cols[idx % 2]:
+        options = sorted(df[col].dropna().unique().tolist())
+        default = df[col].mode()[0]
+        user_input[col] = st.selectbox(col, options, index=options.index(default))
+
+# Convert input to DataFrame
+input_df = pd.DataFrame([user_input])
+input_df = input_df[MODEL_FEATURES]  # ensure correct order
+
+# ===============================
+# Predict button
+# ===============================
+if st.button("Predict Price"):
+    try:
+        prediction = pipeline.predict(input_df)[0]
+
+        st.markdown(
+            f"""
+            <div style="background-color:#1f4e79;padding:25px;border-radius:12px;text-align:center;">
+                <h3 style="color:white;">Estimated Car Price</h3>
+                <h1 style="color:#f9c74f;">${prediction:,.2f}</h1>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    except Exception as e:
+        st.error("❌ Prediction failed. The model may have been trained on different features.")
+        st.write("Error details:")
+        st.write(str(e))
+        st.write("Model expected features:")
+        st.write(MODEL_FEATURES)
+        st.write("Input sent to model:")
+        st.write(input_df)
