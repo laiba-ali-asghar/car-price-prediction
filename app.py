@@ -3,15 +3,15 @@ import pandas as pd
 import numpy as np
 import pickle
 
-# ===============================
-# File paths
-# ===============================
+# ==============================
+# Paths
+# ==============================
 MODEL_PATH = "car_price_model.pkl"
 DATA_PATH = "carprice.csv"
 
-# ===============================
-# Load model pipeline
-# ===============================
+# ==============================
+# Load model
+# ==============================
 @st.cache_resource
 def load_pipeline():
     with open(MODEL_PATH, "rb") as f:
@@ -19,77 +19,73 @@ def load_pipeline():
 
 pipeline = load_pipeline()
 
-# ===============================
-# Load dataset
-# ===============================
+# ==============================
+# Load training dataset
+# ==============================
 df = pd.read_csv(DATA_PATH, na_values="?").dropna(subset=["price"])
 
-# ===============================
-# Identify features
-# ===============================
-NUMERICAL_FEATURES = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
-NUMERICAL_FEATURES = [c for c in NUMERICAL_FEATURES if c != "price"]
+# BELOW IS CRITICAL:
+# Convert all categorical columns to category codes (same encoding as training)
+cat_cols = df.select_dtypes(include="object").columns.tolist()
 
-CATEGORICAL_FEATURES = df.select_dtypes(include=["object"]).columns.tolist()
+for col in cat_cols:
+    df[col] = df[col].astype("category")
+    df[col] = df[col].cat.codes
 
-MODEL_FEATURES = NUMERICAL_FEATURES + CATEGORICAL_FEATURES
+# This gives the model's exact expected structure
+MODEL_FEATURES = pipeline.feature_names_in_.tolist()
 
-# ===============================
+# ==============================
 # Streamlit UI
-# ===============================
+# ==============================
 st.title("🚗 Car Price Prediction App")
 
-st.markdown("Enter the car details below and get the predicted price.")
+st.write("Fill in the car details to predict the selling price.")
 
-user_input = {}
-
-st.subheader("Car Information")
+user_data = {}
 
 cols = st.columns(2)
 
-# Numeric Inputs
-for idx, col in enumerate(NUMERICAL_FEATURES):
-    with cols[idx % 2]:
-        default_value = float(df[col].median())
-        user_input[col] = st.number_input(
-            label=col,
-            value=default_value,
-            format="%.2f"
-        )
+for idx, col in enumerate(MODEL_FEATURES):
 
-# Categorical Inputs
-for idx, col in enumerate(CATEGORICAL_FEATURES):
-    with cols[idx % 2]:
-        options = sorted(df[col].dropna().unique().tolist())
-        default = df[col].mode()[0]
-        user_input[col] = st.selectbox(col, options, index=options.index(default))
+    if col in cat_cols:
+        # categorical → show dropdown of original labels
+        original_categories = pd.read_csv(DATA_PATH, na_values="?")[col].dropna().unique().tolist()
+        default = pd.read_csv(DATA_PATH, na_values="?")[col].mode()[0]
 
-# Convert input to DataFrame
-input_df = pd.DataFrame([user_input])
-input_df = input_df[MODEL_FEATURES]  # ensure correct order
+        with cols[idx % 2]:
+            choice = st.selectbox(col, original_categories, index=original_categories.index(default))
 
-# ===============================
-# Predict button
-# ===============================
+            # encode using SAME mapping
+            df_original = pd.read_csv(DATA_PATH, na_values="?")
+            df_original[col] = df_original[col].astype("category")
+            code_map = dict(enumerate(df_original[col].cat.categories))
+
+            # reverse mapping (label → code)
+            reverse_map = {v: k for k, v in code_map.items()}
+
+            user_data[col] = reverse_map[choice]
+
+    else:
+        # numeric feature
+        default = float(df[col].median())
+        with cols[idx % 2]:
+            user_data[col] = st.number_input(col, value=default)
+
+# Build final input row
+input_df = pd.DataFrame([user_data])
+input_df = input_df[MODEL_FEATURES]
+
+# ==============================
+# Predict
+# ==============================
 if st.button("Predict Price"):
     try:
-        prediction = pipeline.predict(input_df)[0]
-
-        st.markdown(
-            f"""
-            <div style="background-color:#1f4e79;padding:25px;border-radius:12px;text-align:center;">
-                <h3 style="color:white;">Estimated Car Price</h3>
-                <h1 style="color:#f9c74f;">${prediction:,.2f}</h1>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        pred = pipeline.predict(input_df)[0]
+        st.success(f"Predicted Car Price: ${pred:,.2f}")
 
     except Exception as e:
-        st.error("❌ Prediction failed. The model may have been trained on different features.")
-        st.write("Error details:")
+        st.error("Prediction failed.")
         st.write(str(e))
-        st.write("Model expected features:")
-        st.write(MODEL_FEATURES)
         st.write("Input sent to model:")
         st.write(input_df)
